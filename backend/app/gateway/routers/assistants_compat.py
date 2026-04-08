@@ -58,6 +58,7 @@ def _get_default_assistant() -> AssistantResponse:
 
 def _list_assistants() -> list[AssistantResponse]:
     """List all available assistants from config."""
+    # LangGraph 兼容层：assistant 是“逻辑入口”，最终仍路由到同一 lead_agent 图。
     assistants = [_get_default_assistant()]
 
     # Also include custom agents from config.yaml agents directory

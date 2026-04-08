@@ -85,6 +85,8 @@ async def _skill_manage_impl(
     replace: str | None = None,
     expected_count: int | None = None,
 ) -> str:
+    # LangChain 工具运行时提示：ToolRuntime 同时承载 context 与 config，
+    # 可用于拿 thread_id 做审计、并发锁与历史追踪。
     """Manage custom skills under skills/custom/.
 
     Args:
@@ -139,6 +141,7 @@ async def _skill_manage_impl(
             await _to_thread(ensure_custom_skill_is_editable, name)
             if find is None or replace is None:
                 raise ValueError("find and replace are required for patch.")
+            # 关键逻辑：先统计命中数再替换，避免“误替换”或多次替换导致语义漂移。
             skill_file = await _to_thread(get_custom_skill_file, name)
             prev_content = await _to_thread(skill_file.read_text, encoding="utf-8")
             occurrences = prev_content.count(find)

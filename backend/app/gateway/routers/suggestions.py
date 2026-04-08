@@ -38,6 +38,7 @@ def _strip_markdown_code_fence(text: str) -> str:
 
 
 def _parse_json_string_list(text: str) -> list[str] | None:
+    # 容错解析：兼容模型输出被 ```json 包裹或夹带解释文本的情况。
     candidate = _strip_markdown_code_fence(text)
     start = candidate.find("[")
     end = candidate.rfind("]")
@@ -99,6 +100,7 @@ def _format_conversation(messages: list[SuggestionMessage]) -> str:
     description="Generate short follow-up questions a user might ask next, based on recent conversation context.",
 )
 async def generate_suggestions(thread_id: str, request: SuggestionsRequest) -> SuggestionsResponse:
+    # 兜底策略：无有效上下文时直接返回空数组，避免模型空调用。
     if not request.messages:
         return SuggestionsResponse(suggestions=[])
 

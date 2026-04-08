@@ -102,6 +102,9 @@ async def create_run(thread_id: str, body: RunCreateRequest, request: Request) -
 async def stream_run(thread_id: str, body: RunCreateRequest, request: Request) -> StreamingResponse:
     """Create a run and stream events via SSE.
 
+    LangGraph 兼容说明：该接口严格对齐 langgraph-sdk/useStream 的消费协议，
+    前端可直接复用官方 Hook，无需额外适配层。
+
     The response includes a ``Content-Location`` header with the run's
     resource URL, matching the LangGraph Platform protocol.  The
     ``useStream`` React hook uses this to extract run metadata.

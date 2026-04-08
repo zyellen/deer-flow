@@ -15,6 +15,8 @@ import { env } from "@/env";
 
 import { SettingsSection } from "./settings-section";
 
+// 工具设置页：读取 MCP 配置并按服务维度启用/禁用。
+// 学习提示：这类“列表 + 开关”配置界面可类比 Vue 中基于 `v-for` 渲染配置项。
 export function ToolSettingsPage() {
   const { t } = useI18n();
   const { config, isLoading, error } = useMCPConfig();

@@ -296,6 +296,9 @@ class SubagentExecutor:
 
             logger.info(f"[trace={self.trace_id}] Subagent {self.config.name} completed async execution")
 
+            # --- 最终结果提取：从 final_state 中取出 AI 的最后回复 ---
+            # 策略：倒序查找最后一个 AIMessage，提取其 content 作为结果
+            # 支持三种 content 格式：纯字符串、content block 列表、其他类型
             if final_state is None:
                 logger.warning(f"[trace={self.trace_id}] Subagent {self.config.name} no final state")
                 result.result = "No response generated"
@@ -418,6 +421,7 @@ class SubagentExecutor:
     def execute(self, task: str, result_holder: SubagentResult | None = None) -> SubagentResult:
         """Execute a task synchronously (wrapper around async execution).
 
+
         This method runs the async execution in a new event loop, allowing
         asynchronous tools (like MCP tools) to be used within the thread pool.
 
@@ -440,11 +444,14 @@ class SubagentExecutor:
                 loop = None
 
             if loop is not None and loop.is_running():
+                # --- 检测到已在运行的事件循环 → 使用独立线程隔离执行 ---
+                # 原因：asyncio.run() 不能在已有运行中的 loop 内调用
+                # 方案：提交到 _isolated_loop_pool，在新线程中创建全新事件循环
                 logger.debug(f"[trace={self.trace_id}] Subagent {self.config.name} detected running event loop, using isolated thread")
                 future = _isolated_loop_pool.submit(self._execute_in_isolated_loop, task, result_holder)
                 return future.result()
 
-            # Standard path: no running event loop, use asyncio.run
+            # --- 标准路径：无运行中的事件循环，直接使用 asyncio.run ---
             return asyncio.run(self._aexecute(task, result_holder))
         except Exception as e:
             logger.exception(f"[trace={self.trace_id}] Subagent {self.config.name} execution failed")
@@ -476,7 +483,7 @@ class SubagentExecutor:
         if task_id is None:
             task_id = str(uuid.uuid4())[:8]
 
-        # Create initial pending result
+        # 创建初始 pending 结果
         result = SubagentResult(
             task_id=task_id,
             trace_id=self.trace_id,
@@ -488,7 +495,9 @@ class SubagentExecutor:
         with _background_tasks_lock:
             _background_tasks[task_id] = result
 
-        # Submit to scheduler pool
+        # --- 提交到调度线程池（scheduler pool） ---
+        # 调度器负责：状态管理 → 提交到执行池 → 超时控制 → 结果回填
+        # 使用双线程池架构避免调度阻塞执行
         def run_task():
             with _background_tasks_lock:
                 _background_tasks[task_id].status = SubagentStatus.RUNNING

@@ -23,6 +23,8 @@ const languageOptions: { value: Locale; label: string }[] = [
   { value: "zh-CN", label: zhCN.locale.localName },
 ];
 
+// 外观设置页：管理主题模式与语言切换。
+// 学习提示：`Select` 的 `value + onValueChange` 组合可类比 Vue 的 `v-model`。
 export function AppearanceSettingsPage() {
   const { t, locale, changeLocale } = useI18n();
   const { theme, setTheme, systemTheme } = useTheme();

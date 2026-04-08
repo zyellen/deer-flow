@@ -52,6 +52,7 @@ def Next(anchor: type[AgentMiddleware]):
 
 def Prev(anchor: type[AgentMiddleware]):
     """Declare this middleware should be placed before *anchor* in the chain."""
+    # 学习提示：可类比前端中间件/插件执行顺序（先注册的不一定先执行）。
     if not (isinstance(anchor, type) and issubclass(anchor, AgentMiddleware)):
         raise TypeError(f"@Prev expects an AgentMiddleware subclass, got {anchor!r}")
 

@@ -30,6 +30,8 @@ import { textOfMessage } from "@/core/threads/utils";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
+// Agent 专属聊天页：在通用会话能力上叠加 agent 维度（身份、欢迎语、上下文注入）。
+// 学习提示：可类比 Vue Router 的动态路由参数（`/agents/:agent_name/...`）。
 export default function AgentChatPage() {
   const { t } = useI18n();
   const [showFollowups, setShowFollowups] = useState(false);
@@ -47,12 +49,15 @@ export default function AgentChatPage() {
 
   const { showNotification } = useNotification();
   const [thread, sendMessage] = useThreadStream({
+    // 新建线程先不带 ID，待后端返回后再更新本地路由状态。
     threadId: isNewThread ? undefined : threadId,
+    // 状态管理提示：把 `agent_name` 合并到上下文，后端可据此切换到对应 Agent。
     context: { ...settings.context, agent_name: agent_name },
     onStart: (createdThreadId) => {
       setThreadId(createdThreadId);
       setIsNewThread(false);
-      // ! Important: Never use next.js router for navigation in this case, otherwise it will cause the thread to re-mount and lose all states. Use native history API instead.
+      // 特殊处理（hack）说明：避免使用 Next Router，防止会话页重挂载导致流式状态丢失。
+      // 用 history.replaceState 只更新 URL，不打断当前渲染树。
       history.replaceState(
         null,
         "",
@@ -77,6 +82,7 @@ export default function AgentChatPage() {
     },
   });
 
+  // 组件通信提示：输入框通过回调上抛消息，页面统一附加 `agent_name` 后发送。
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
       void sendMessage(threadId, message, { agent_name });

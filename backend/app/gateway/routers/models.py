@@ -32,6 +32,9 @@ class ModelsListResponse(BaseModel):
 async def list_models() -> ModelsListResponse:
     """List all available models from configuration.
 
+    LangChain 学习提示：这里返回的是“模型元信息目录”，
+    实际实例化发生在 create_chat_model 阶段（运行时按 name 选择 provider）。
+
     Returns model information suitable for frontend display,
     excluding sensitive fields like API keys and internal configuration.
 

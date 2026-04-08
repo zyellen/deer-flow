@@ -108,6 +108,7 @@ def get_checkpointer() -> Checkpointer:
         ImportError: If the required package for the configured backend is not installed.
         ValueError: If ``connection_string`` is missing for a backend that requires it.
     """
+    # 单例策略：编译图和运行时共用同一 checkpointer，减少连接抖动与重复初始化。
     global _checkpointer, _checkpointer_ctx
 
     if _checkpointer is not None:
@@ -122,10 +123,8 @@ def get_checkpointer() -> Checkpointer:
     config = get_checkpointer_config()
 
     if config is None and _app_config is None:
-        # Only load app config lazily when neither the app config nor an explicit
-        # checkpointer config has been initialized yet. This keeps tests that
-        # intentionally set the global checkpointer config isolated from any
-        # ambient config.yaml on disk.
+        # 懒加载说明：仅在两者都未初始化时才读取 app_config，
+        # 这样测试里手工注入的全局配置不会被磁盘上的 config.yaml 意外覆盖。
         try:
             get_app_config()
         except FileNotFoundError:

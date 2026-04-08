@@ -15,20 +15,27 @@ import { useThreads } from "@/core/threads/hooks";
 import { pathOfThread, titleOfThread } from "@/core/threads/utils";
 import { formatTimeAgo } from "@/core/utils/datetime";
 
+// 会话列表页：负责展示历史线程并提供本地搜索。
+// 学习提示：`search` + `onChange` 的组合可类比 Vue 的 `v-model` 双向绑定。
 export default function ChatsPage() {
   const { t } = useI18n();
   const { data: threads } = useThreads();
   const [search, setSearch] = useState("");
 
+  // 副作用：根据当前语言文案更新浏览器标题。
+  // 可类比 Vue 的 `onMounted/onUpdated` 中同步 document.title 的做法。
   useEffect(() => {
     document.title = `${t.pages.chats} - ${t.pages.appName}`;
   }, [t.pages.chats, t.pages.appName]);
 
+  // 计算属性：仅当线程列表或搜索词变化时重新计算，避免每次渲染全量过滤。
+  // 可类比 Vue 的 `computed`。
   const filteredThreads = useMemo(() => {
     return threads?.filter((thread) => {
       return titleOfThread(thread).toLowerCase().includes(search.toLowerCase());
     });
   }, [threads, search]);
+
   return (
     <WorkspaceContainer>
       <WorkspaceHeader></WorkspaceHeader>

@@ -192,6 +192,8 @@ async def create_agent_endpoint(request: AgentCreateRequest) -> AgentResponse:
     try:
         agent_dir.mkdir(parents=True, exist_ok=True)
 
+        # 创建流程：先落 config，再落 SOUL。
+        # 原因：config 是最小可运行单元，便于失败时回滚与排查。
         # Write config.yaml
         config_data: dict = {"name": normalized_name}
         if request.description:
@@ -217,7 +219,7 @@ async def create_agent_endpoint(request: AgentCreateRequest) -> AgentResponse:
     except HTTPException:
         raise
     except Exception as e:
-        # Clean up on failure
+        # 特殊处理（补偿事务）：任一步骤失败都回滚目录，避免生成半成品 Agent。
         if agent_dir.exists():
             shutil.rmtree(agent_dir)
         logger.error(f"Failed to create agent '{request.name}': {e}", exc_info=True)

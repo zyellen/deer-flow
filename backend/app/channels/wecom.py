@@ -1,3 +1,27 @@
+"""企业微信（WeCom）渠道模块 — 通过 WebSocket 长连接实现双向消息转发。
+
+架构概述：
+- 使用 wecom-aibot-python-sdk 建立 WebSocket 长连接（无需公网 IP）
+- 支持文本、图片、文件、混合消息的接收与回复
+- 支持流式输出（streaming）和文件回传
+- 消息加解密：企业微信媒体文件使用 AES 密钥加密传输
+
+消息流转：
+1. 用户发送消息 → WebSocket 回调 (_on_ws_text/_on_ws_mixed/_on_ws_image/_on_ws_file)
+2. 构造 InboundMessage → 发布到 MessageBus
+3. ChannelManager 处理后发布 OutboundMessage
+4. _on_outbound 接收 → 调用 _send_ws 通过流式接口回复用户
+5. 若有附件 → send_file 上传至企业微信服务器并推送
+
+配置项（config.yaml → channels.wecom）：
+- bot_id: 企业微信机器人的 bot_id
+- bot_secret: 机器人对应的 secret
+- working_message: 流式回复时的占位提示语
+
+依赖：
+- wecom-aibot-python-sdk >= 0.1.6（WebSocket 媒体上传 API）
+"""
+
 from __future__ import annotations
 
 import asyncio
@@ -19,6 +43,8 @@ logger = logging.getLogger(__name__)
 
 
 class WeComChannel(Channel):
+    """企业微信渠道适配器：负责双向消息转发、流式回复和文件回传。"""
+
     def __init__(self, bus: MessageBus, config: dict[str, Any]) -> None:
         super().__init__(name="wecom", bus=bus, config=config)
         self._bot_id: str | None = None
@@ -307,6 +333,7 @@ class WeComChannel(Channel):
                 return
 
             last_exc: Exception | None = None
+            # 关键逻辑：指数退避重试（1s/2s/4s...），降低瞬时网络抖动导致的发送失败。
             for attempt in range(_max_retries):
                 try:
                     await self._ws_client.reply_stream(frame, stream_id, msg.text, bool(msg.is_final))

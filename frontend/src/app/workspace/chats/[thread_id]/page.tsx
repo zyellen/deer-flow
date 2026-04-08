@@ -29,15 +29,22 @@ import { textOfMessage } from "@/core/threads/utils";
 import { env } from "@/env";
 import { cn } from "@/lib/utils";
 
+// 通用聊天页：整合消息流、上下文设置、通知与输入区，是会话体验的主容器。
+// 学习提示：`ThreadContext.Provider` 可类比 Vue 的 provide/inject，用于跨层传递线程状态。
 export default function ChatPage() {
   const { t } = useI18n();
+  // 跟进问题区域是否展开，会影响消息列表底部留白。
   const [showFollowups, setShowFollowups] = useState(false);
+  // 会话 ID 与“是否新会话”由专用 hook 管理，页面只消费状态。
   const { threadId, setThreadId, isNewThread, setIsNewThread, isMock } =
     useThreadChat();
+  // 线程设置（如上下文模式）可类比 Vue + Pinia 的局部 store。
   const [settings, setSettings] = useThreadSettings(threadId);
   const [mounted, setMounted] = useState(false);
   useSpecificChatMode();
 
+  // 生命周期提示：只在客户端首帧后置为 true，避免 SSR 与客户端渲染不一致。
+  // 可类比 Vue 的 `onMounted` 后再访问依赖浏览器环境的能力。
   useEffect(() => {
     setMounted(true);
   }, []);
@@ -45,13 +52,16 @@ export default function ChatPage() {
   const { showNotification } = useNotification();
 
   const [thread, sendMessage, isUploading] = useThreadStream({
+    // 新建会话时先不传 threadId，等待后端创建并回填。
     threadId: isNewThread ? undefined : threadId,
     context: settings.context,
     isMock,
     onStart: (createdThreadId) => {
       setThreadId(createdThreadId);
       setIsNewThread(false);
-      // ! Important: Never use next.js router for navigation in this case, otherwise it will cause the thread to re-mount and lose all states. Use native history API instead.
+      // 特殊处理（hack）说明：这里刻意不用 Next Router 跳转。
+      // 原因：路由跳转会触发页面重挂载，流式输出中的本地状态可能丢失。
+      // 因此改用原生 history.replaceState，仅更新地址栏而不重建组件树。
       history.replaceState(null, "", `/workspace/chats/${createdThreadId}`);
     },
     onFinish: (state) => {
@@ -72,12 +82,15 @@ export default function ChatPage() {
     },
   });
 
+  // 组件通信提示：`InputBox` 通过 onSubmit 把输入上抛到页面，再统一发送到消息流。
   const handleSubmit = useCallback(
     (message: PromptInputMessage) => {
       void sendMessage(threadId, message);
     },
     [sendMessage, threadId],
   );
+
+  // 错误与中断控制：停止流式输出由统一入口触发，便于后续扩展重试逻辑。
   const handleStop = useCallback(async () => {
     await thread.stop();
   }, [thread]);

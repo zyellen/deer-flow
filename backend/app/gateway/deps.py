@@ -43,8 +43,10 @@ async def langgraph_runtime(app: FastAPI) -> AsyncGenerator[None, None]:
 
 def get_stream_bridge(request: Request) -> StreamBridge:
     """Return the global :class:`StreamBridge`, or 503."""
+    # 依赖注入提示：每次请求都从 app.state 取单例，避免重复创建连接对象。
     bridge = getattr(request.app.state, "stream_bridge", None)
     if bridge is None:
+        # 友好失败：未初始化时返回 503，明确告诉调用方“服务暂不可用”。
         raise HTTPException(status_code=503, detail="Stream bridge not available")
     return bridge
 

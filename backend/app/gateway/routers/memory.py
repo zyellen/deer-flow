@@ -114,6 +114,8 @@ class MemoryStatusResponse(BaseModel):
     description="Retrieve the current global memory data including user context, history, and facts.",
 )
 async def get_memory() -> MemoryResponse:
+    # 说明：这里返回的是“结构化长期记忆”，不是向量检索式 RAG 索引。
+    # 若后续接入 RAG，可在本接口外新增 embedding / retrieval 层，职责分离更清晰。
     """Get the current global memory data.
 
     Returns:
@@ -278,6 +280,7 @@ async def export_memory() -> MemoryResponse:
 )
 async def import_memory(request: MemoryResponse) -> MemoryResponse:
     """Import and persist memory data."""
+    # 错误处理策略：导入失败统一返回 500，防止部分写入造成内存与磁盘状态分裂。
     try:
         memory_data = import_memory_data(request.model_dump())
     except OSError as exc:

@@ -74,6 +74,7 @@ NODE_HOST = os.environ.get("NODE_HOST", "host.docker.internal")
 
 def join_host_path(base: str, *parts: str) -> str:
     """Join host filesystem path segments while preserving native style."""
+    # 兼容性处理：同时支持 Windows 与 POSIX 路径拼接，避免挂载路径在跨平台场景失效。
     if not parts:
         return base
 
@@ -143,7 +144,8 @@ def _init_k8s_client() -> k8s_client.CoreV1Api:
     if k8s_api_server:
         configuration = k8s_client.Configuration.get_default_copy()
         configuration.host = k8s_api_server
-        # Self-signed certs are common for local clusters
+        # 特殊处理（hack）说明：本地集群常见自签名证书，否则容器内直连会频繁 SSL 失败。
+        # 该开关仅建议用于本地/开发环境。
         configuration.verify_ssl = False
         api_client = k8s_client.ApiClient(configuration)
         return k8s_client.CoreV1Api(api_client)
@@ -451,6 +453,8 @@ async def create_sandbox(req: CreateSandboxRequest):
             )
 
     # ── Read the auto-allocated NodePort ─────────────────────────────
+    # 关键逻辑：NodePort 分配是异步生效的，这里采用短轮询等待端口可读。
+    # 学习提示：可类比前端轮询后端任务状态（pending -> ready）。
     node_port: int | None = None
     for _ in range(20):
         node_port = _get_node_port(sandbox_id)

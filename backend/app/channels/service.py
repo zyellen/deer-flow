@@ -26,6 +26,8 @@ _CHANNELS_GATEWAY_URL_ENV = "DEER_FLOW_CHANNELS_GATEWAY_URL"
 
 
 def _resolve_service_url(config: dict[str, Any], config_key: str, env_key: str, default: str) -> str:
+    # 配置优先级：显式配置 > 环境变量 > 默认值。
+    # 该顺序便于本地调试（env）与线上托管（配置中心）并存。
     value = config.pop(config_key, None)
     if isinstance(value, str) and value.strip():
         return value
@@ -80,6 +82,7 @@ class ChannelService:
         if self._running:
             return
 
+        # 生命周期顺序：先启动分发器，再启动各渠道，避免消息先到但无人消费。
         await self.manager.start()
 
         for name, channel_config in self._config.items():
@@ -126,6 +129,7 @@ class ChannelService:
 
     async def _start_channel(self, name: str, config: dict[str, Any]) -> bool:
         """Instantiate and start a single channel."""
+        # 插件化加载：通过注册表 + 反射解耦渠道实现，新增渠道无需改核心调度逻辑。
         import_path = _CHANNEL_REGISTRY.get(name)
         if not import_path:
             logger.warning("Unknown channel type: %s", name)

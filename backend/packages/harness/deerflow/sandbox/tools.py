@@ -466,7 +466,9 @@ def mask_local_paths_in_output(output: str, thread_data: ThreadDataState | None)
     """
     result = output
 
-    # Mask skills host paths
+    # --- 第一阶段：掩码 skills 宿主机路径 ---
+    # 将 /path/to/skills/* 替换回 /mnt/skills/*
+    # 同时处理原始路径和 resolve() 后的绝对路径，以及反斜杠变体
     skills_host = _get_skills_host_path()
     skills_container = _get_skills_container_path()
     if skills_host:
@@ -506,7 +508,8 @@ def mask_local_paths_in_output(output: str, thread_data: ThreadDataState | None)
 
     # Custom mount host paths are masked by LocalSandbox._reverse_resolve_paths_in_output()
 
-    # Mask user-data host paths
+    # --- 第三阶段：掩码 user-data 宿主机路径（线程级别） ---
+    # 将 workspace/uploads/outputs 的真实路径替换回 /mnt/user-data/*
     if thread_data is None:
         return result
 
@@ -708,7 +711,8 @@ def replace_virtual_paths_in_command(command: str, thread_data: ThreadDataState 
     """
     result = command
 
-    # Replace skills paths
+    # --- 第一阶段：替换 skills 虚拟路径 ---
+    # /mnt/skills/* → 实际 skills 宿主机目录
     skills_container = _get_skills_container_path()
     skills_host = _get_skills_host_path()
     if skills_host and skills_container in result:
@@ -732,7 +736,8 @@ def replace_virtual_paths_in_command(command: str, thread_data: ThreadDataState 
 
     # Custom mount paths are resolved by LocalSandbox._resolve_paths_in_command()
 
-    # Replace user-data paths
+    # --- 第三阶段：替换 user-data 虚拟路径 ---
+    # /mnt/user-data/* → 线程对应的真实宿主机路径
     if VIRTUAL_PATH_PREFIX in result and thread_data is not None:
         pattern = re.compile(rf"{re.escape(VIRTUAL_PATH_PREFIX)}(/[^\s\"';&|<>()]*)?")
 
@@ -1002,6 +1007,13 @@ def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, com
     try:
         sandbox = ensure_sandbox_initialized(runtime)
         if is_local_sandbox(runtime):
+            # --- 本地沙箱模式：需要在宿主机直接执行命令 ---
+            # 1. 检查是否允许宿主机 bash（config.sandbox.allow_host_bash）
+            # 2. 确保线程目录已创建（workspace/uploads/outputs）
+            # 3. 校验命令中的绝对路径安全性（防止路径穿越）
+            # 4. 将虚拟路径（/mnt/user-data/*）替换为实际宿主机路径
+            # 5. 自动添加 cd <workspace> 前缀锚定相对路径
+            # 6. 执行命令并截断过长的输出
             if not is_host_bash_allowed():
                 return f"Error: {LOCAL_HOST_BASH_DISABLED_MESSAGE}"
             ensure_thread_directories_exist(runtime)
@@ -1017,7 +1029,10 @@ def bash_tool(runtime: ToolRuntime[ContextT, ThreadState], description: str, com
                 max_chars = sandbox_cfg.bash_output_max_chars if sandbox_cfg else 20000
             except Exception:
                 max_chars = 20000
+            # 掩码宿主机路径，避免向用户泄露真实文件系统布局
             return _truncate_bash_output(mask_local_paths_in_output(output, thread_data), max_chars)
+        # --- 容器沙箱模式：直接在隔离环境中执行 ---
+        # 路径已在容器内挂载，无需转换；但仍需确保线程目录存在
         ensure_thread_directories_exist(runtime)
         try:
             from deerflow.config.app_config import get_app_config

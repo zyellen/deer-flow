@@ -23,6 +23,10 @@ class ClarificationMiddlewareState(AgentState):
 class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
     """Intercepts clarification tool calls and interrupts execution to present questions to the user.
 
+    LangChain/LangGraph 学习提示：
+    - 该中间件属于工具调用前置拦截层（AgentMiddleware）。
+    - 通过 Command(goto=END) 可以中断当前图执行，等待用户补充信息后继续。
+
     When the model calls the `ask_clarification` tool, this middleware:
     1. Intercepts the tool call before execution
     2. Extracts the clarification question and metadata
@@ -121,11 +125,10 @@ class ClarificationMiddleware(AgentMiddleware[ClarificationMiddlewareState]):
             name="ask_clarification",
         )
 
-        # Return a Command that:
-        # 1. Adds the formatted tool message
-        # 2. Interrupts execution by going to __end__
-        # Note: We don't add an extra AIMessage here - the frontend will detect
-        # and display ask_clarification tool messages directly
+        # 返回 LangGraph Command：
+        # 1) 把 ToolMessage 注入状态（前端可直接渲染）
+        # 2) goto=END 中断当前回合，形成“人类确认后再继续”的 HITL 流程
+        # 说明：这里不额外生成 AIMessage，避免界面重复展示。
         return Command(
             update={"messages": [tool_message]},
             goto=END,

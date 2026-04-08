@@ -29,6 +29,8 @@ import { env } from "@/env";
 
 import { SettingsSection } from "./settings-section";
 
+// Skill 设置页：展示技能列表并支持启停、创建技能入口。
+// 组件通信提示：`onClose` 由父层注入，子组件在跳转前可主动关闭设置弹窗。
 export function SkillSettingsPage({ onClose }: { onClose?: () => void } = {}) {
   const { t } = useI18n();
   const { skills, isLoading, error } = useSkills();

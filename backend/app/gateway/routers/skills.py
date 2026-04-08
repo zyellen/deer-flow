@@ -1,3 +1,28 @@
+"""Skills（技能）管理路由 — 提供 Skill 的 CRUD、安装、编辑、回滚和启停控制。
+
+功能概览：
+- GET  /api/skills          — 列出所有可用技能（public + custom）
+- POST /api/skills/install   — 从 .skill 压缩包安装新技能
+- GET  /api/skills/custom    — 仅列出用户自定义技能
+- GET  /api/skills/custom/{name}     — 获取自定义技能内容（含 SKILL.md 源码）
+- PUT  /api/skills/custom/{name}     — 编辑自定义技能（含安全扫描 + 历史留痕）
+- DEL  /api/skills/custom/{name}     — 删除自定义技能（含历史归档）
+- GET  /api/skills/custom/{name}/history  — 查看技能变更历史
+- POST /api/skills/custom/{name}/rollback — 回滚到历史版本
+- GET  /api/skills/{name}     — 获取单个技能详情
+- PUT  /api/skills/{name}     — 更新技能的启用/禁用状态
+
+安全机制：
+- 编辑/回滚操作均经过安全扫描（scan_skill_content）
+- 所有写操作使用 atomic_write 保证原子性
+- 变更自动记录到 history 文件，支持审计和回滚
+- 安装操作限定在 thread 虚拟路径内，防止目录穿越
+
+配置存储：
+- 技能的 enabled 状态持久化到 extensions_config.json
+- 自定义技能的 SKILL.md 存储在 custom_skills_dir 目录下
+"""
+
 import json
 import logging
 import shutil
@@ -117,6 +142,7 @@ async def list_skills() -> SkillsListResponse:
 )
 async def install_skill(request: SkillInstallRequest) -> SkillInstallResponse:
     try:
+        # 安全边界：先把虚拟路径解析到线程沙盒目录，避免跨目录安装任意文件。
         skill_file_path = resolve_thread_virtual_path(request.thread_id, request.path)
         result = install_skill_from_archive(skill_file_path)
         await refresh_skills_system_prompt_cache_async()
@@ -162,6 +188,8 @@ async def get_custom_skill(skill_name: str) -> CustomSkillContentResponse:
 @router.put("/skills/custom/{skill_name}", response_model=CustomSkillContentResponse, summary="Edit Custom Skill")
 async def update_custom_skill(skill_name: str, request: CustomSkillUpdateRequest) -> CustomSkillContentResponse:
     try:
+        # 更新链路：可编辑性校验 -> 语法校验 -> 安全扫描 -> 原子写入 -> 历史留痕。
+        # 该顺序保证“要么完整成功，要么可审计回滚”。
         ensure_custom_skill_is_editable(skill_name)
         validate_skill_markdown_content(skill_name, request.content)
         scan = await scan_skill_content(request.content, executable=False, location=f"{skill_name}/SKILL.md")

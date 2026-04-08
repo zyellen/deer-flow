@@ -10,6 +10,8 @@ import { useLocalSettings } from "@/core/settings";
 
 import { SettingsSection } from "./settings-section";
 
+// 通知设置页：处理权限申请、开关控制和测试通知。
+// 状态管理提示：通知开关持久化在本地设置中，可类比 Vue + Pinia 的本地存储插件。
 export function NotificationSettingsPage() {
   const { t } = useI18n();
   const { permission, isSupported, requestPermission, showNotification } =

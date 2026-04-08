@@ -568,6 +568,7 @@ async def update_thread_state(thread_id: str, body: ThreadStateUpdateRequest, re
     # checkpoint_ns must be present in the config for aput — default to ""
     # (the root graph namespace).  checkpoint_id is optional; omitting it
     # fetches the latest checkpoint for the thread.
+    # 学习提示：这类似前端状态快照“基于最新版本打补丁”，而不是覆盖整份状态。
     read_config: dict[str, Any] = {
         "configurable": {
             "thread_id": thread_id,

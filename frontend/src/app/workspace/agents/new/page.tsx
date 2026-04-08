@@ -43,17 +43,25 @@ import { uuid } from "@/core/utils/uuid";
 import { isIMEComposing } from "@/lib/ime";
 import { cn } from "@/lib/utils";
 
+// 页面状态机：先命名（name），再进入引导聊天（chat）。
 type Step = "name" | "chat";
+// setup_agent 工具调用状态：空闲 -> 已请求 -> 已完成。
 type SetupAgentStatus = "idle" | "requested" | "completed";
 
+// Agent 名称仅允许字母、数字、连字符，便于作为稳定标识符使用。
 const NAME_RE = /^[A-Za-z0-9-]+$/;
+// 本地存储键：用于“保存提示”只展示一次。
 const SAVE_HINT_STORAGE_KEY = "deerflow.agent-create.save-hint-seen";
+// 重试退避时间（毫秒）：应对“创建后立即读取”时的短暂最终一致性延迟。
 const AGENT_READ_RETRY_DELAYS_MS = [200, 500, 1_000, 2_000];
 
 function wait(ms: number) {
   return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
+// 关键逻辑：读取 Agent 的“带退避重试”策略。
+// 通俗解释：刚写入完成时，读请求可能短时间拿不到数据；这里按 0/200/500/1000/2000ms 逐步重试。
+// 学习提示：这和前端轮询等待后端状态稳定类似。
 async function getAgentWithRetry(agentName: string) {
   for (const delay of [0, ...AGENT_READ_RETRY_DELAYS_MS]) {
     if (delay > 0) {
@@ -63,7 +71,8 @@ async function getAgentWithRetry(agentName: string) {
     try {
       return await getAgent(agentName);
     } catch {
-      // Retry until the write settles or the attempts are exhausted.
+      // 特殊处理：这里故意吞掉单次读取错误，交给后续重试统一兜底。
+      // 原因：此阶段最常见是暂时不可读，直接报错会打断正常创建流程。
     }
   }
 
@@ -84,11 +93,14 @@ function getCreateAgentErrorMessage(
   return fallbackMessage;
 }
 
+// 新建 Agent 页面：采用“命名 -> 引导聊天 -> 保存”的分步交互。
+// 学习提示：这里多个 `useState` 的组合，可类比 Vue 组合式 API 中多个 `ref`。
 export default function NewAgentPage() {
   const { t } = useI18n();
   const router = useRouter();
 
   const [step, setStep] = useState<Step>("name");
+  // 受控输入：行为可类比 Vue 的 `v-model`，输入变化与状态始终同步。
   const [nameInput, setNameInput] = useState("");
   const [nameError, setNameError] = useState("");
   const [isCheckingName, setIsCheckingName] = useState(false);
@@ -102,17 +114,21 @@ export default function NewAgentPage() {
   const threadId = useMemo(() => uuid(), []);
 
   const [thread, sendMessage] = useThreadStream({
+    // 只有进入聊天步骤才真正开启线程，避免命名步骤提前触发会话资源。
     threadId: step === "chat" ? threadId : undefined,
     context: {
       mode: "flash",
+      // 引导模式标识：通知后端这是创建 Agent 的 bootstrap 会话。
       is_bootstrap: true,
     },
     onFinish() {
+      // 兜底状态恢复：若保存流程未落库成功，回到 idle，避免按钮一直锁定。
       if (!agent && setupAgentStatus === "requested") {
         setSetupAgentStatus("idle");
       }
     },
     onToolEnd({ name }) {
+      // 组件通信提示：工具执行结束事件由线程层上抛到页面层统一处理。
       if (name !== "setup_agent" || !agentName) return;
       setSetupAgentStatus("completed");
       void getAgentWithRetry(agentName).then((fetched) => {
@@ -126,6 +142,8 @@ export default function NewAgentPage() {
     },
   });
 
+  // 生命周期提示：切换到聊天步骤后，再决定是否展示“一次性保存提示”。
+  // 这类“进入页面后触发”的逻辑可类比 Vue 的 `onMounted` + 本地缓存判断。
   useEffect(() => {
     if (typeof window === "undefined" || step !== "chat") {
       return;
@@ -137,6 +155,8 @@ export default function NewAgentPage() {
     window.localStorage.setItem(SAVE_HINT_STORAGE_KEY, "1");
   }, [step]);
 
+  // 关键流程：名称校验 -> 可用性检查 -> 创建 Agent -> 进入引导聊天。
+  // 错误处理策略：每个可能失败的网络步骤都给出明确、友好的提示文案。
   const handleConfirmName = useCallback(async () => {
     const trimmed = nameInput.trim();
     if (!trimmed) return;
@@ -211,6 +231,7 @@ export default function NewAgentPage() {
     }
   };
 
+  // 聊天提交：把当前输入与目标 agent_name 绑定后发送到同一线程。
   const handleChatSubmit = useCallback(
     async (text: string) => {
       const trimmed = text.trim();
@@ -224,6 +245,7 @@ export default function NewAgentPage() {
     [agentName, sendMessage, thread.isLoading, threadId],
   );
 
+  // 保存动作：通过隐藏消息触发后端 setup_agent 工具，不污染聊天可见记录。
   const handleSaveAgent = useCallback(async () => {
     if (
       !agentName ||
@@ -349,6 +371,7 @@ export default function NewAgentPage() {
   }
 
   return (
+    // 组件通信提示：线程状态通过 Context 向下游消息组件共享，可类比 Vue 的 provide/inject。
     <ThreadContext.Provider value={{ thread }}>
       <ArtifactsProvider>
         <div className="flex size-full flex-col">

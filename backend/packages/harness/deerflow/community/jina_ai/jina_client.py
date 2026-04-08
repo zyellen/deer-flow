@@ -9,7 +9,10 @@ _api_key_warned = False
 
 
 class JinaClient:
+    """Jina Reader 客户端：抓取网页并返回可供后续处理的文本内容。"""
+
     async def crawl(self, url: str, return_format: str = "html", timeout: int = 10) -> str:
+        # 友好提示：未配置 API Key 时仅告警一次，避免日志重复刷屏。
         global _api_key_warned
         headers = {
             "Content-Type": "application/json",
@@ -38,6 +41,7 @@ class JinaClient:
 
             return response.text
         except Exception as e:
+            # 错误处理：捕获网络异常并返回可读错误，避免上层调用因未处理异常中断。
             error_message = f"Request to Jina API failed: {str(e)}"
             logger.exception(error_message)
             return f"Error: {error_message}"

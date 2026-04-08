@@ -98,6 +98,8 @@ def _as_dict(value: Any) -> dict[str, Any]:
 
 
 def _merge_dicts(*layers: Any) -> dict[str, Any]:
+    # 配置合并策略：后面的层级覆盖前面的层级，
+    # 顺序为“默认值 -> 全局会话 -> 渠道会话 -> 用户会话”。
     merged: dict[str, Any] = {}
     for layer in layers:
         if isinstance(layer, Mapping):
@@ -385,6 +387,8 @@ def _prepare_artifact_delivery(
 
 
 async def _ingest_inbound_files(thread_id: str, msg: InboundMessage) -> list[dict[str, Any]]:
+    # 入站文件落盘：下载 -> 文件名规范化 -> 防重名 -> 写入 uploads 目录。
+    # 学习提示：这类似前端上传前的预处理管线（校验/重命名/入库）。
     if not msg.files:
         return []
 
@@ -753,17 +757,29 @@ class ChannelManager:
         run_config: dict[str, Any],
         run_context: dict[str, Any],
     ) -> None:
+        """流式聊天处理：通过 SSE 流实时推送 AI 回复，支持增量文本合并与节流发布。
+
+        处理流程：
+        1. 调用 client.runs.stream() 开启双模式流（messages-tuple + values）
+        2. 实时累积 AI 文本，按最小间隔节流推送到消息总线
+        3. 流结束后提取最终响应、附件，发送最终消息（is_final=True）
+        """
         logger.info("[Manager] invoking runs.stream(thread_id=%s, text=%r)", thread_id, msg.text[:100])
 
-        last_values: dict[str, Any] | list | None = None
-        streamed_buffers: dict[str, str] = {}
-        current_message_id: str | None = None
-        latest_text = ""
-        last_published_text = ""
-        last_publish_at = 0.0
-        stream_error: BaseException | None = None
+        # --- 状态变量初始化 ---
+        last_values: dict[str, Any] | list | None = None          # 最后一次 values 快照（用于最终结果提取）
+        streamed_buffers: dict[str, str] = {}                   # 按 message_id 分组的文本缓冲区
+        current_message_id: str | None = None                  # 当前正在处理的 AI 消息 ID
+        latest_text = ""                                       # 最新累积的完整文本
+        last_published_text = ""                                # 上次已发布的文本（用于去重）
+        last_publish_at = 0.0                                   # 上次发布时间戳（用于节流）
+        stream_error: BaseException | None = None               # 记录流式过程中的异常
 
         try:
+            # --- 阶段一：SSE 流消费循环 ---
+            # 使用双 stream_mode：
+            # - messages-tuple：提供增量文本块（适合逐字显示）
+            # - values：提供完整状态快照（适合提取最终结果）
             async for chunk in client.runs.stream(
                 thread_id,
                 assistant_id,
@@ -777,15 +793,19 @@ class ChannelManager:
                 data = getattr(chunk, "data", None)
 
                 if event == "messages-tuple":
+                    # 增量文本：累加到 buffer，处理 delta/cumulative 两种格式
                     accumulated_text, current_message_id = _accumulate_stream_text(streamed_buffers, current_message_id, data)
                     if accumulated_text:
                         latest_text = accumulated_text
                 elif event == "values" and isinstance(data, (dict, list)):
+                    # 全量快照：保存最新状态，并尝试提取响应文本
                     last_values = data
                     snapshot_text = _extract_response_text(data)
                     if snapshot_text:
                         latest_text = snapshot_text
 
+                # --- 去重 + 节流：避免高频更新导致前端渲染抖动 ---
+                # 最小间隔 350ms（STREAM_UPDATE_MIN_INTERVAL_SECONDS）
                 if not latest_text or latest_text == last_published_text:
                     continue
 
@@ -793,6 +813,7 @@ class ChannelManager:
                 if last_published_text and now - last_publish_at < STREAM_UPDATE_MIN_INTERVAL_SECONDS:
                     continue
 
+                # 推送非最终消息到消息总线（is_final=False）
                 await self.bus.publish_outbound(
                     OutboundMessage(
                         channel_name=msg.channel_name,
@@ -807,11 +828,14 @@ class ChannelManager:
                 last_publish_at = now
         except Exception as exc:
             stream_error = exc
+            # 错误分级记录：并发冲突 vs 其他异常
             if _is_thread_busy_error(exc):
                 logger.warning("[Manager] thread busy (concurrent run rejected): thread_id=%s", thread_id)
             else:
                 logger.exception("[Manager] streaming error: thread_id=%s", thread_id)
         finally:
+            # --- 阶段二：流结束后的最终结果处理 ---
+            # 无论成功还是异常，都尝试发送最终消息（is_final=True）
             result = last_values if last_values is not None else {"messages": [{"type": "ai", "content": latest_text}]}
             response_text = _extract_response_text(result)
             artifacts = _extract_artifacts(result)
@@ -819,13 +843,16 @@ class ChannelManager:
 
             if not response_text:
                 if attachments:
+                    # 有附件但无文本：生成附件文件名列表作为回复
                     response_text = _format_artifact_text([attachment.virtual_path for attachment in attachments])
                 elif stream_error:
+                    # 错误分级：并发冲突给出明确可执行提示，其它异常返回通用友好信息。
                     if _is_thread_busy_error(stream_error):
                         response_text = THREAD_BUSY_MESSAGE
                     else:
                         response_text = "An error occurred while processing your request. Please try again."
                 else:
+                    # 无错误也无文本：返回已累积的流式文本或占位符
                     response_text = latest_text or "(No response from agent)"
 
             logger.info(
@@ -835,6 +862,7 @@ class ChannelManager:
                 len(artifacts),
                 stream_error,
             )
+            # 发送最终消息（包含附件、标记 is_final=True）
             await self.bus.publish_outbound(
                 OutboundMessage(
                     channel_name=msg.channel_name,

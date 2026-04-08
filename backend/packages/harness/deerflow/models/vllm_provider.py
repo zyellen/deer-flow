@@ -157,7 +157,12 @@ def _restore_reasoning_field(payload_msg: dict[str, Any], orig_msg: AIMessage) -
 
 
 class VllmChatModel(ChatOpenAI):
-    """ChatOpenAI variant that preserves vLLM reasoning fields across turns."""
+    """ChatOpenAI variant that preserves vLLM reasoning fields across turns.
+
+    LangChain 适配说明：
+    - 继承 ChatOpenAI，但覆盖 payload/chunk 处理路径。
+    - 目标是让 vLLM 的 reasoning 字段在多轮对话中不丢失。
+    """
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -173,6 +178,8 @@ class VllmChatModel(ChatOpenAI):
         **kwargs: Any,
     ) -> dict[str, Any]:
         """Restore assistant reasoning in request payloads for interleaved thinking."""
+        # 特殊处理（兼容 hack）：LangChain 默认不会回传 vLLM 的 reasoning，
+        # 这里手动回注，保证“思考 -> 工具调用 -> 继续思考”的链路完整。
         original_messages = self._convert_input(input_).to_messages()
         payload = super()._get_request_payload(input_, stop=stop, **kwargs)
         _normalize_vllm_chat_template_kwargs(payload)
@@ -218,6 +225,8 @@ class VllmChatModel(ChatOpenAI):
         base_generation_info: dict | None,
     ) -> ChatGenerationChunk | None:
         """Preserve vLLM reasoning on streaming deltas."""
+        # 流式场景关键点：delta 与最终消息字段不完全同构，
+        # 需要在 chunk 级别补齐 reasoning，避免前端只看到“空白思考链”。
         if chunk.get("type") == "content.delta":
             return None
 

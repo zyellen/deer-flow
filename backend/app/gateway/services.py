@@ -74,6 +74,8 @@ def normalize_stream_modes(raw: list[str] | str | None) -> list[str]:
 
 def normalize_input(raw_input: dict[str, Any] | None) -> dict[str, Any]:
     """Convert LangGraph Platform input format to LangChain state dict."""
+    # LangChain 适配层：把 wire-format message 转成 HumanMessage 等对象，
+    # 保证下游 create_agent / graph.invoke 能按统一消息协议运行。
     if raw_input is None:
         return {}
     messages = raw_input.get("messages")
@@ -117,6 +119,8 @@ def build_run_config(
     *,
     assistant_id: str | None = None,
 ) -> dict[str, Any]:
+    # LangGraph 配置拼装：统一处理 configurable/context 兼容，
+    # 避免不同 SDK 版本在字段语义上的差异导致运行失败。
     """Build a RunnableConfig dict for the agent.
 
     When *assistant_id* refers to a custom agent (anything other than
@@ -288,6 +292,7 @@ async def start_run(
     # The ``context`` field is a custom extension for the langgraph-compat layer
     # that carries agent configuration (model_name, thinking_enabled, etc.).
     # Only agent-relevant keys are forwarded; unknown keys (e.g. thread_id) are ignored.
+    # 特殊处理说明：这里是“白名单透传”，防止任意字段污染 LangChain RunnableConfig。
     context = getattr(body, "context", None)
     if context:
         _CONTEXT_CONFIGURABLE_KEYS = {

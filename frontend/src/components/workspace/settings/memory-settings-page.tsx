@@ -92,6 +92,8 @@ function isMemoryFact(value: unknown): value is UserMemory["facts"][number] {
   );
 }
 
+// 导入校验：逐层检查 JSON 结构，避免脏数据污染本地记忆。
+// 关键点：通过 Type Guard 收窄类型，后续逻辑可获得更安全的字段访问。
 function isImportedMemory(value: unknown): value is UserMemory {
   if (!isRecord(value)) {
     return false;
@@ -210,6 +212,8 @@ function buildMemorySectionGroups(
   ];
 }
 
+// 汇总渲染算法：把结构化记忆数据转换为 Markdown，再注入分隔线优化可读性。
+// 学习提示：这一步类似 Vue 的“计算属性 + 模板渲染前预处理”。
 function summariesToMarkdown(
   memory: UserMemory,
   sectionGroups: MemorySectionGroup[],
@@ -273,6 +277,8 @@ function upperFirst(str: string) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
+// 记忆设置页：提供查询、筛选、增删改、导入导出等完整记忆管理能力。
+// 状态管理提示：该页面是“服务端数据 + 本地 UI 状态”混合管理的典型场景。
 export function MemorySettingsPage() {
   const { t } = useI18n();
   const { memory, isLoading, error } = useMemory();
@@ -409,6 +415,8 @@ export function MemorySettingsPage() {
     }
   }
 
+  // 文件导入流程：读取 -> JSON 解析 -> 类型校验 -> 二次确认。
+  // 特殊处理：先清空 input.value，确保用户重复选择同一文件时也能触发 change 事件。
   async function handleImportFileSelection(event: {
     target: HTMLInputElement;
   }) {
