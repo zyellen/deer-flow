@@ -1,3 +1,39 @@
+"""
+Lead Agent（主 Agent）创建模块 - 用前端思维理解
+
+这个模块就像是创建一个"智能组件工厂"，专门生产具备完整功能的 AI 助手。
+
+【核心比喻】
+想象一下你在构建一个智能客服组件：
+
+```typescript
+function LeadAgent({
+  model,              // 选择 AI 模型（像选 GPT-4 还是 Claude）
+  tools,              // 可用工具集（查询订单、修改密码等 API）
+  systemPrompt,       // 角色设定（"你是专业客服，语气要友好"）
+  middlewares,        // 拦截器链（日志、限流、缓存等）
+  enableMemory,       // 是否记住用户偏好
+  enableVision,       // 是否支持看图
+}) {
+  // 1. 创建模型实例
+  // 2. 组装中间件管道
+  // 3. 生成系统提示词
+  // 4. 返回可运行的 Agent
+}
+```
+
+【架构层次】（从下往上）
+
+1. LangChain create_agent = React.createElement（最底层）
+2. create_deerflow_agent = 高阶组件（HOC），可复用的基础包装
+3. make_lead_agent = 业务级组件，带完整业务配置（本文件）
+
+就像：
+- createElement → 基础函数
+- withRouter(withStyles(Component)) → HOC 链
+- <App /> → 完整的业务组件
+"""
+
 import logging
 
 from langchain.agents import create_agent
@@ -24,28 +60,73 @@ logger = logging.getLogger(__name__)
 
 
 def _resolve_model_name(requested_model_name: str | None = None) -> str:
-    """Resolve a runtime model name safely, falling back to default if invalid. Returns None if no models are configured."""
+    """
+    模型名称解析器 - 安全地确定使用哪个 AI 模型
+
+    类比前端：这就像一个 "API endpoint 选择器"：
+    1. 用户指定了就用用户指定的
+    2. 用户没指定或指定无效，就用默认的
+    3. 都没有配置就报错
+
+    类似于：
+    ```typescript
+    function resolveApiEndpoint(requestedEndpoint?: string): string {
+      const defaultEndpoint = config.endpoints[0];
+      if (!defaultEndpoint) throw new Error('没有配置 API 端点');
+      if (requestedEndpoint && isValid(requestedEndpoint)) {
+        return requestedEndpoint;
+      }
+      return defaultEndpoint;
+    }
+    ```
+    """
     app_config = get_app_config()
     default_model_name = app_config.models[0].name if app_config.models else None
     if default_model_name is None:
-        raise ValueError("No chat models are configured. Please configure at least one model in config.yaml.")
+        raise ValueError("没有配置聊天模型，请在 config.yaml 中至少配置一个模型")
 
+    # 用户请求的模型有效就用用户的
     if requested_model_name and app_config.get_model_config(requested_model_name):
         return requested_model_name
 
+    # 用户请求的模型无效，回退到默认并警告
     if requested_model_name and requested_model_name != default_model_name:
-        logger.warning(f"Model '{requested_model_name}' not found in config; fallback to default model '{default_model_name}'.")
+        logger.warning(f"模型 '{requested_model_name}' 未找到，回退到默认模型 '{default_model_name}'")
     return default_model_name
 
 
 def _create_summarization_middleware() -> SummarizationMiddleware | None:
-    """Create and configure the summarization middleware from config."""
+    """
+    创建摘要中间件 - 长对话的"虚拟滚动"功能
+
+    【核心比喻】
+    这就像前端长列表的虚拟滚动（Virtual Scrolling）：
+    - 当对话历史太长时，自动把旧消息"摘要化"
+    - 保留最近 N 条完整消息（像保留视口内的项目）
+    - 旧消息变成摘要形式（像列表项变成占位符）
+
+    类比 React Virtual List：
+    ```typescript
+    function VirtualMessageList({ messages }) {
+      // 当消息超过 1000 条，把最早的 800 条摘要成一句话
+      const displayMessages = messages.length > 1000
+        ? [summaryOfFirst800, ...messages.slice(-200)]
+        : messages;
+    }
+    ```
+
+    【配置参数】
+    - enabled: 是否开启虚拟滚动
+    - trigger: 触发条件（如消息数超过 N，或 token 数超过 M）
+    - keep: 保留多少条最近消息不摘要
+    - model: 用什么模型做摘要（通常用轻量级模型节省成本）
+    """
     config = get_summarization_config()
 
     if not config.enabled:
         return None
 
-    # Prepare trigger parameter
+    # 准备触发条件参数
     trigger = None
     if config.trigger is not None:
         if isinstance(config.trigger, list):
@@ -53,18 +134,18 @@ def _create_summarization_middleware() -> SummarizationMiddleware | None:
         else:
             trigger = config.trigger.to_tuple()
 
-    # Prepare keep parameter
+    # 准备保留策略
     keep = config.keep.to_tuple()
 
-    # Prepare model parameter
+    # 准备模型参数
     if config.model_name:
         model = create_chat_model(name=config.model_name, thinking_enabled=False)
     else:
-        # Use a lightweight model for summarization to save costs
-        # Falls back to default model if not explicitly specified
+        # 摘要任务用轻量级模型，节省成本
+        # 就像列表滚动不需要重新渲染全部内容
         model = create_chat_model(thinking_enabled=False)
 
-    # Prepare kwargs
+    # 组装参数
     kwargs = {
         "model": model,
         "trigger": trigger,
@@ -195,115 +276,239 @@ Being proactive with task management demonstrates thoroughness and ensures all r
     return TodoMiddleware(system_prompt=system_prompt, tool_description=tool_description)
 
 
-# ThreadDataMiddleware must be before SandboxMiddleware to ensure thread_id is available
-# UploadsMiddleware should be after ThreadDataMiddleware to access thread_id
-# DanglingToolCallMiddleware patches missing ToolMessages before model sees the history
-# SummarizationMiddleware should be early to reduce context before other processing
-# TodoListMiddleware should be before ClarificationMiddleware to allow todo management
-# TitleMiddleware generates title after first exchange
-# MemoryMiddleware queues conversation for memory update (after TitleMiddleware)
-# ViewImageMiddleware should be before ClarificationMiddleware to inject image details before LLM
-# ToolErrorHandlingMiddleware should be before ClarificationMiddleware to convert tool exceptions to ToolMessages
-# ClarificationMiddleware should be last to intercept clarification requests after model calls
 def _build_middlewares(config: RunnableConfig, model_name: str | None, agent_name: str | None = None, custom_middlewares: list[AgentMiddleware] | None = None):
-    """Build middleware chain based on runtime configuration.
+    """
+    构建中间件链 - 组装 AI 助手的"处理管道"
+
+    【比喻：Express/Koa 中间件栈】
+    请求流向就像数据流过管道：
+    ```
+    用户输入 → ThreadData → Uploads → Sandbox → DanglingToolCall
+                ↓
+              Guardrail → ErrorHandler → Summarization → TodoList
+                ↓
+              Title → Memory → Vision → DeferredFilter → Subagent
+                ↓
+              LoopDetection → Custom → Clarification → AI Agent
+    ```
+
+    【中间件顺序的重要性】
+    就像 Redux middleware 的顺序会影响行为：
+
+    1. ThreadDataMiddleware (最先)
+       - 初始化线程上下文（类似创建 React Context）
+       - 必须在 Sandbox 之前，因为沙盒需要 thread_id
+
+    2. UploadsMiddleware
+       - 处理文件上传（类似 multer 中间件）
+       - 依赖 ThreadData 提供的 thread_id
+
+    3. DanglingToolCallMiddleware
+       - 修复中断的工具调用（类似处理 pending Promise）
+       - 必须在 AI 看到历史之前处理
+
+    4. SummarizationMiddleware
+       - 长对话摘要（类似虚拟滚动）
+       - 尽早处理可以减少后续中间件的工作量
+
+    5. TodoListMiddleware
+       - 任务追踪（像 Redux DevTools）
+       - 要在 Clarification 之前，让 AI 能管理任务
+
+    6. TitleMiddleware
+       - 自动生成标题（像自动生成文件名）
+       - 在首次对话后触发
+
+    7. MemoryMiddleware
+       - 记忆持久化（像 Redux Persist）
+       - 在 Title 之后，确保标题被记住
+
+    8. ViewImageMiddleware
+       - 图片处理（像上传预览）
+       - 在 Clarification 之前注入图片描述
+
+    9. ToolErrorHandlingMiddleware
+       - 错误转换（像 axios error interceptor）
+       - 在 Clarification 之前把异常转为消息
+
+    10. ClarificationMiddleware (内置最后)
+        - 确认拦截（像确认弹窗）
+        - 始终最后，拦截所有需要用户确认的请求
 
     Args:
-        config: Runtime configuration containing configurable options like is_plan_mode.
-        agent_name: If provided, MemoryMiddleware will use per-agent memory storage.
-        custom_middlewares: Optional list of custom middlewares to inject into the chain.
+        config: 运行时配置（包含 is_plan_mode 等选项）
+        model_name: 模型名称，Vision 中间件需要检查是否支持图片
+        agent_name: Agent 名称，Memory 用做命名空间
+        custom_middlewares: 自定义中间件列表（可选）
 
     Returns:
-        List of middleware instances.
+        中间件实例列表（有序的）
     """
+    # ==========================================================================
+    # 第一阶段：构建基础运行时中间件（Sandbox 基础设施）
+    # 类比：Express 应用的基础中间件（body-parser、cookie-parser 等）
+    # ==========================================================================
     middlewares = build_lead_runtime_middlewares(lazy_init=True)
 
-    # Add summarization middleware if enabled
+    # ==========================================================================
+    # 第二阶段：根据配置动态添加功能中间件
+    # 类比：根据 feature flags 动态启用 Redux middleware
+    # ==========================================================================
+
+    # 摘要中间件 - 长对话自动摘要（虚拟滚动）
     summarization_middleware = _create_summarization_middleware()
     if summarization_middleware is not None:
         middlewares.append(summarization_middleware)
 
-    # Add TodoList middleware if plan mode is enabled
+    # 计划模式中间件 - 任务追踪器
     is_plan_mode = config.get("configurable", {}).get("is_plan_mode", False)
     todo_list_middleware = _create_todo_list_middleware(is_plan_mode)
     if todo_list_middleware is not None:
         middlewares.append(todo_list_middleware)
 
-    # Add TokenUsageMiddleware when token_usage tracking is enabled
+    # Token 用量追踪 - 像性能监控中间件
     if get_app_config().token_usage.enabled:
         middlewares.append(TokenUsageMiddleware())
 
-    # Add TitleMiddleware
+    # 自动标题生成 - 像自动生成页面标题
     middlewares.append(TitleMiddleware())
 
-    # Add MemoryMiddleware (after TitleMiddleware)
+    # 记忆中间件 - 像 Redux Persist，持久化用户偏好
+    # 放在 Title 之后，让标题也能被记住
     middlewares.append(MemoryMiddleware(agent_name=agent_name))
 
-    # Add ViewImageMiddleware only if the current model supports vision.
-    # Use the resolved runtime model_name from make_lead_agent to avoid stale config values.
+    # 视觉中间件 - 仅当模型支持图片时启用
+    # 就像根据浏览器特性启用功能
     app_config = get_app_config()
     model_config = app_config.get_model_config(model_name) if model_name else None
     if model_config is not None and model_config.supports_vision:
         middlewares.append(ViewImageMiddleware())
 
-    # Add DeferredToolFilterMiddleware to hide deferred tool schemas from model binding
+    # 延迟工具过滤器 - 从模型绑定中隐藏延迟工具模式
+    # 像 API 路由过滤中间件
     if app_config.tool_search.enabled:
         from deerflow.agents.middlewares.deferred_tool_filter_middleware import DeferredToolFilterMiddleware
 
         middlewares.append(DeferredToolFilterMiddleware())
 
-    # Add SubagentLimitMiddleware to truncate excess parallel task calls
+    # 子 Agent 限制器 - 并发控制（像 p-limit）
     subagent_enabled = config.get("configurable", {}).get("subagent_enabled", False)
     if subagent_enabled:
         max_concurrent_subagents = config.get("configurable", {}).get("max_concurrent_subagents", 3)
         middlewares.append(SubagentLimitMiddleware(max_concurrent=max_concurrent_subagents))
 
-    # LoopDetectionMiddleware — detect and break repetitive tool call loops
+    # 循环检测中间件 - 像 React 的无限循环警告
     middlewares.append(LoopDetectionMiddleware())
 
-    # Inject custom middlewares before ClarificationMiddleware
+    # ==========================================================================
+    # 第三阶段：插入用户自定义中间件
+    # 类比：应用级别的自定义 Express middleware
+    # ==========================================================================
     if custom_middlewares:
         middlewares.extend(custom_middlewares)
 
-    # ClarificationMiddleware should always be last
+    # ==========================================================================
+    # 最后：确认中间件（始终最后）
+    # 像全局的请求确认拦截器
+    # ==========================================================================
     middlewares.append(ClarificationMiddleware())
     return middlewares
 
 
 def make_lead_agent(config: RunnableConfig):
-    # Lazy import to avoid circular dependency
+    """
+    创建主 Agent（Lead Agent）- 业务级 Agent 工厂
+
+    【核心比喻】
+    这就像根据用户配置创建一个完整的"智能客服组件"：
+
+    ```typescript
+    function createLeadAgent(runtimeConfig) {
+      // 1. 解析配置（像处理组件 props）
+      const {
+        modelName,         // 选择 AI 模型
+        thinkingEnabled,   // 是否开启深度思考
+        planMode,          // 是否启用任务追踪
+        subagentEnabled,   // 是否允许子任务
+      } = runtimeConfig;
+
+      // 2. 加载 Agent 配置（像读取组件预设）
+      const agentConfig = loadAgentConfig(agentName);
+
+      // 3. 创建模型实例（像初始化 API 客户端）
+      const model = createChatModel({ name: modelName, thinkingEnabled });
+
+      // 4. 获取可用工具集（像导入 API 函数）
+      const tools = getAvailableTools({ modelName, groups: agentConfig.toolGroups });
+
+      // 5. 组装中间件链（像配置 Redux middleware）
+      const middlewares = buildMiddlewares(config, modelName, agentName);
+
+      // 6. 生成系统提示词（像组件的默认 props）
+      const systemPrompt = applyPromptTemplate({ ... });
+
+      // 7. 创建并返回 Agent 实例
+      return createAgent({ model, tools, middlewares, systemPrompt });
+    }
+    ```
+
+    【配置优先级】（从高到低）
+    1. 运行时请求参数（用户当前选择）
+    2. Agent 自定义配置（该 Agent 的专属配置）
+    3. 全局默认配置（系统默认值）
+
+    就像 React 组件的 props 优先级：
+    runtimeProps > componentDefaultProps > globalConfig
+    """
+    # 延迟导入避免循环依赖
+    # 类似于动态 import()，避免启动时加载所有模块
     from deerflow.tools import get_available_tools
     from deerflow.tools.builtins import setup_agent
 
+    # ==========================================================================
+    # 解析运行时配置
+    # 从 config.configurable 中提取用户传入的参数
+    # 类似于从函数参数或 URL query string 中提取配置
+    # ==========================================================================
     cfg = config.get("configurable", {})
 
-    thinking_enabled = cfg.get("thinking_enabled", True)
-    reasoning_effort = cfg.get("reasoning_effort", None)
-    requested_model_name: str | None = cfg.get("model_name") or cfg.get("model")
-    is_plan_mode = cfg.get("is_plan_mode", False)
-    subagent_enabled = cfg.get("subagent_enabled", False)
-    max_concurrent_subagents = cfg.get("max_concurrent_subagents", 3)
-    is_bootstrap = cfg.get("is_bootstrap", False)
-    agent_name = cfg.get("agent_name")
+    # 核心功能开关
+    thinking_enabled = cfg.get("thinking_enabled", True)        # 是否启用深度思考
+    reasoning_effort = cfg.get("reasoning_effort", None)        # 推理努力程度（低/中/高）
+    requested_model_name: str | None = cfg.get("model_name") or cfg.get("model")  # 请求的模型
+    is_plan_mode = cfg.get("is_plan_mode", False)               # 是否启用计划模式
+    subagent_enabled = cfg.get("subagent_enabled", False)       # 是否启用子 Agent
+    max_concurrent_subagents = cfg.get("max_concurrent_subagents", 3)  # 最大并发子任务数
+    is_bootstrap = cfg.get("is_bootstrap", False)               # 是否为引导模式
+    agent_name = cfg.get("agent_name")                          # Agent 名称（自定义 Agent 用）
 
+    # ==========================================================================
+    # 加载 Agent 配置
+    # 如果指定了 agent_name，加载该 Agent 的专属配置
+    # 类似于读取组件的配置文件或 preset
+    # ==========================================================================
     agent_config = load_agent_config(agent_name) if not is_bootstrap else None
-    # Custom agent model or fallback to global/default model resolution
-    agent_model_name = agent_config.model if agent_config and agent_config.model else _resolve_model_name()
 
-    # Final model name resolution with request override, then agent config, then global default
+    # 确定最终使用的模型名称（优先级：请求 > Agent配置 > 全局默认）
+    agent_model_name = agent_config.model if agent_config and agent_config.model else _resolve_model_name()
     model_name = requested_model_name or agent_model_name
 
+    # 获取模型配置
     app_config = get_app_config()
     model_config = app_config.get_model_config(model_name) if model_name else None
 
+    # 验证模型配置
     if model_config is None:
-        raise ValueError("No chat model could be resolved. Please configure at least one model in config.yaml or provide a valid 'model_name'/'model' in the request.")
+        raise ValueError("无法解析聊天模型配置，请在 config.yaml 中配置模型或提供有效的 model_name")
+
+    # 检查模型是否支持思考模式
     if thinking_enabled and not model_config.supports_thinking:
-        logger.warning(f"Thinking mode is enabled but model '{model_name}' does not support it; fallback to non-thinking mode.")
+        logger.warning(f"模型 '{model_name}' 不支持思考模式，回退到普通模式")
         thinking_enabled = False
 
+    # 记录创建日志（像 React 的 props 检查日志）
     logger.info(
-        "Create Agent(%s) -> thinking_enabled: %s, reasoning_effort: %s, model_name: %s, is_plan_mode: %s, subagent_enabled: %s, max_concurrent_subagents: %s",
+        "创建 Agent(%s) -> 思考模式: %s, 推理强度: %s, 模型: %s, 计划模式: %s, 子Agent: %s, 最大并发: %s",
         agent_name or "default",
         thinking_enabled,
         reasoning_effort,
@@ -313,38 +518,61 @@ def make_lead_agent(config: RunnableConfig):
         max_concurrent_subagents,
     )
 
-    # Inject run metadata for LangSmith trace tagging
+    # ==========================================================================
+    # 注入运行元数据（用于 LangSmith 追踪）
+    # 类似于给 React 组件添加 data-testid 或 devtools 标记
+    # ==========================================================================
     if "metadata" not in config:
         config["metadata"] = {}
 
-    config["metadata"].update(
-        {
-            "agent_name": agent_name or "default",
-            "model_name": model_name or "default",
-            "thinking_enabled": thinking_enabled,
-            "reasoning_effort": reasoning_effort,
-            "is_plan_mode": is_plan_mode,
-            "subagent_enabled": subagent_enabled,
-        }
-    )
+    config["metadata"].update({
+        "agent_name": agent_name or "default",
+        "model_name": model_name or "default",
+        "thinking_enabled": thinking_enabled,
+        "reasoning_effort": reasoning_effort,
+        "is_plan_mode": is_plan_mode,
+        "subagent_enabled": subagent_enabled,
+    })
 
+    # ==========================================================================
+    # 引导模式：最小化配置的引导 Agent
+    # 用于首次创建自定义 Agent 的流程
+    # 类比：应用初始化向导，只提供最基础的功能
+    # ==========================================================================
     if is_bootstrap:
-        # Special bootstrap agent with minimal prompt for initial custom agent creation flow
         return create_agent(
             model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled),
             tools=get_available_tools(model_name=model_name, subagent_enabled=subagent_enabled) + [setup_agent],
             middleware=_build_middlewares(config, model_name=model_name),
-            system_prompt=apply_prompt_template(subagent_enabled=subagent_enabled, max_concurrent_subagents=max_concurrent_subagents, available_skills=set(["bootstrap"])),
+            system_prompt=apply_prompt_template(
+                subagent_enabled=subagent_enabled,
+                max_concurrent_subagents=max_concurrent_subagents,
+                available_skills=set(["bootstrap"])
+            ),
             state_schema=ThreadState,
         )
 
-    # Default lead agent (unchanged behavior)
+    # ==========================================================================
+    # 默认主 Agent：完整功能配置
+    # 这就像创建一个配置完备的智能组件
+    # ==========================================================================
     return create_agent(
-        model=create_chat_model(name=model_name, thinking_enabled=thinking_enabled, reasoning_effort=reasoning_effort),
-        tools=get_available_tools(model_name=model_name, groups=agent_config.tool_groups if agent_config else None, subagent_enabled=subagent_enabled),
+        model=create_chat_model(
+            name=model_name,
+            thinking_enabled=thinking_enabled,
+            reasoning_effort=reasoning_effort
+        ),
+        tools=get_available_tools(
+            model_name=model_name,
+            groups=agent_config.tool_groups if agent_config else None,
+            subagent_enabled=subagent_enabled
+        ),
         middleware=_build_middlewares(config, model_name=model_name, agent_name=agent_name),
         system_prompt=apply_prompt_template(
-            subagent_enabled=subagent_enabled, max_concurrent_subagents=max_concurrent_subagents, agent_name=agent_name, available_skills=set(agent_config.skills) if agent_config and agent_config.skills is not None else None
+            subagent_enabled=subagent_enabled,
+            max_concurrent_subagents=max_concurrent_subagents,
+            agent_name=agent_name,
+            available_skills=set(agent_config.skills) if agent_config and agent_config.skills is not None else None
         ),
         state_schema=ThreadState,
     )

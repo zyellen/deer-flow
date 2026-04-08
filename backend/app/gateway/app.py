@@ -23,88 +23,146 @@ from app.gateway.routers import (
 )
 from deerflow.config.app_config import get_app_config
 
-# Configure logging
+# =============================================================================
+# 日志配置 - 类似于前端 console.log 的全局配置
+# 想象一下这是你在 React 应用的入口设置的日志级别
+# =============================================================================
 logging.basicConfig(
-    level=logging.INFO,
+    level=logging.INFO,  # 日志级别：DEBUG < INFO < WARNING < ERROR
     format="%(asctime)s - %(name)s - %(levelname)s - %(message)s",
     datefmt="%Y-%m-%d %H:%M:%S",
 )
 
+# 获取当前模块的 logger 实例
+# 类似于 const logger = createLogger('gateway:app')
 logger = logging.getLogger(__name__)
 
 
+# =============================================================================
+# 应用生命周期管理器 - 类似于 React 的 useEffect + cleanup 组合
+#
+# 比喻理解：
+# - 这就像 React 组件的挂载和卸载生命周期
+# - asynccontextmanager = useEffect(() => { setup(); return () => cleanup(); }, [])
+# - yield 之前的代码 = 组件挂载时的初始化逻辑
+# - yield 之后的代码 = 组件卸载时的清理逻辑
+# =============================================================================
 @asynccontextmanager
 async def lifespan(app: FastAPI) -> AsyncGenerator[None, None]:
-    """Application lifespan handler."""
+    """应用生命周期处理器 - 管理服务的启动和优雅关闭"""
 
-    # Load config and check necessary environment variables at startup
+    # -------------------------------------------------------------------------
+    # 【启动阶段】= React 组件 Mount 时的初始化
+    # 就像你的 App 组件启动时要检查 API 连接、初始化状态管理器
+    # -------------------------------------------------------------------------
     try:
+        # 加载全局配置 - 类似于读取 window.ENV 或 import.meta.env
         get_app_config()
-        logger.info("Configuration loaded successfully")
+        logger.info("配置加载成功 ✅")
     except Exception as e:
-        error_msg = f"Failed to load configuration during gateway startup: {e}"
+        # 启动失败就抛出异常阻止服务启动
+        # 类似于 React 的 Error Boundary 捕获启动错误
+        error_msg = f"网关启动时加载配置失败: {e}"
         logger.exception(error_msg)
         raise RuntimeError(error_msg) from e
+
     config = get_gateway_config()
-    logger.info(f"Starting API Gateway on {config.host}:{config.port}")
+    logger.info(f"API 网关启动中 {config.host}:{config.port} 🚀")
 
-    # Initialize LangGraph runtime components (StreamBridge, RunManager, checkpointer, store)
+    # -------------------------------------------------------------------------
+    # 初始化 LangGraph 运行时
+    # 比喻：这就像是初始化 React Context，让整个应用树都能访问共享状态
+    # async with = React 的 Suspense，等待异步初始化完成
+    # -------------------------------------------------------------------------
     async with langgraph_runtime(app):
-        logger.info("LangGraph runtime initialised")
+        logger.info("LangGraph 运行时初始化完成 ⚡")
 
-        # Start IM channel service if any channels are configured
+        # 启动 IM 渠道服务（飞书/Slack/钉钉等集成）
+        # 类似于初始化 WebSocket 连接或第三方 SDK
         try:
             from app.channels.service import start_channel_service
 
             channel_service = await start_channel_service()
-            logger.info("Channel service started: %s", channel_service.get_status())
+            logger.info("IM 渠道服务启动: %s", channel_service.get_status())
         except Exception:
-            logger.exception("No IM channels configured or channel service failed to start")
+            # 渠道服务失败不会阻止主服务启动，只是记录日志
+            logger.exception("IM 渠道未配置或服务启动失败（非致命）")
 
+        # yield = 服务正式启动，开始接受请求
+        # 就像 React 中 return 之后的渲染，表示初始化完成
         yield
 
-        # Stop channel service on shutdown
+        # ---------------------------------------------------------------------
+        # 【关闭阶段】= React 组件 Unmount 时的清理
+        # 就像 useEffect 的 cleanup 函数，关闭连接、清理资源
+        # ---------------------------------------------------------------------
         try:
             from app.channels.service import stop_channel_service
 
             await stop_channel_service()
+            logger.info("IM 渠道服务已关闭")
         except Exception:
-            logger.exception("Failed to stop channel service")
+            logger.exception("关闭渠道服务时出错")
 
-    logger.info("Shutting down API Gateway")
+    logger.info("API 网关已关闭 👋")
 
 
 def create_app() -> FastAPI:
-    """Create and configure the FastAPI application.
+    """创建并配置 FastAPI 应用实例。
+
+    比喻理解：
+    - 这就像创建一个 React 应用的根组件
+    - FastAPI = React Application Shell
+    - router = 路由配置 (react-router-dom 的 Routes)
+    - middleware = 全局拦截器/中间件
 
     Returns:
-        Configured FastAPI application instance.
+        配置好的 FastAPI 应用实例
     """
 
+    # =============================================================================
+    # 创建 FastAPI 应用实例
+    # 类似于：const app = createApp({ ... })
+    # =============================================================================
     app = FastAPI(
         title="DeerFlow API Gateway",
         description="""
-## DeerFlow API Gateway
+## DeerFlow API Gateway - 用前端思维理解
 
-API Gateway for DeerFlow - A LangGraph-based AI agent backend with sandbox execution capabilities.
+API 网关是 DeerFlow 的"入口组件"，基于 LangGraph 构建 AI Agent 后端。
 
-### Features
+### 类比 React 架构理解：
 
-- **Models Management**: Query and retrieve available AI models
-- **MCP Configuration**: Manage Model Context Protocol (MCP) server configurations
-- **Memory Management**: Access and manage global memory data for personalized conversations
-- **Skills Management**: Query and manage skills and their enabled status
-- **Artifacts**: Access thread artifacts and generated files
-- **Health Monitoring**: System health check endpoints
+```
+DeerFlow 架构 ≈ 现代 React 应用
+├── API Gateway (本文件) = App Router + API Routes
+├── LangGraph = React 状态管理 (Redux/Zustand) + 工作流引擎
+├── Agents = 智能组件，能自主决定调用什么工具
+├── Tools = API Client 函数，调用外部服务
+└── Middlewares = 请求拦截器 (axios interceptors)
+```
 
-### Architecture
+### 核心功能模块：
 
-LangGraph requests are handled by nginx reverse proxy.
-This gateway provides custom endpoints for models, MCP configuration, skills, and artifacts.
+| 模块 | 类比前端概念 | 作用 |
+|------|-------------|------|
+| Models | 组件库选择器 | 管理可用的 AI 模型 |
+| MCP | 第三方服务配置 | 管理外部工具服务连接 |
+| Memory | localStorage / Redux Persist | 持久化用户记忆 |
+| Skills | npm 包管理 | 动态加载功能模块 |
+| Artifacts | 文件下载服务 | 生成的文件资源 |
+
+### 请求流向：
+
+```
+用户请求 → nginx (反向代理) → API Gateway → LangGraph Agent → 响应
+                ↓
+        静态资源服务 (类比 CDN)
+```
         """,
         version="0.1.0",
-        lifespan=lifespan,
-        docs_url="/docs",
+        lifespan=lifespan,  # 传入生命周期管理器
+        docs_url="/docs",   # API 文档地址 (类似 Storybook)
         redoc_url="/redoc",
         openapi_url="/openapi.json",
         openapi_tags=[
@@ -163,59 +221,123 @@ This gateway provides custom endpoints for models, MCP configuration, skills, an
         ],
     )
 
-    # CORS is handled by nginx - no need for FastAPI middleware
+    # ==========================================================================
+    # CORS 处理说明
+    # 类似于前端配置 axios.defaults.withCredentials
+    # 这里由 nginx 统一处理跨域，Gateway 不需要额外配置
+    # ==========================================================================
 
-    # Include routers
-    # Models API is mounted at /api/models
+    # ==========================================================================
+    # 注册路由模块 - 类似于 react-router-dom 的 <Route /> 配置
+    #
+    # 每个 router 都是一个 Blueprint（蓝图），包含一组相关接口
+    # 类比前端：每个 router 就像一个 feature 模块的 API 集合
+    # ==========================================================================
+
+    # --------------------------------------------------------------------------
+    # Models 路由 - AI 模型管理
+    # 类比：获取可用的 UI 组件列表，比如 <GPT4 /> <Claude /> 等
+    # GET /api/models - 获取所有可用模型
+    # --------------------------------------------------------------------------
     app.include_router(models.router)
 
-    # MCP API is mounted at /api/mcp
+    # --------------------------------------------------------------------------
+    # MCP 路由 - Model Context Protocol 配置管理
+    # 类比：管理第三方服务集成配置（类似管理 API Keys）
+    # MCP 让 AI 能调用外部工具，就像你的组件调用第三方 SDK
+    # --------------------------------------------------------------------------
     app.include_router(mcp.router)
 
-    # Memory API is mounted at /api/memory
+    # --------------------------------------------------------------------------
+    # Memory 路由 - 全局记忆管理
+    # 类比：用户偏好设置的 CRUD API（像 localStorage 的服务器版）
+    # 让 AI 记住用户的信息，提供个性化回复
+    # --------------------------------------------------------------------------
     app.include_router(memory.router)
 
-    # Skills API is mounted at /api/skills
+    # --------------------------------------------------------------------------
+    # Skills 路由 - 技能管理
+    # 类比：npm 包管理，动态安装/卸载功能模块
+    # 每个 skill 就像一个可插拔的 React Hook
+    # --------------------------------------------------------------------------
     app.include_router(skills.router)
 
-    # Artifacts API is mounted at /api/threads/{thread_id}/artifacts
+    # --------------------------------------------------------------------------
+    # Artifacts 路由 - 生成文件资源管理
+    # 类比：文件下载服务，用户生成的图片、代码、文档等
+    # 路径：/api/threads/{thread_id}/artifacts
+    # --------------------------------------------------------------------------
     app.include_router(artifacts.router)
 
-    # Uploads API is mounted at /api/threads/{thread_id}/uploads
+    # --------------------------------------------------------------------------
+    # Uploads 路由 - 文件上传管理
+    # 类比：FormData 文件上传接口，处理用户上传的图片/文档
+    # 路径：/api/threads/{thread_id}/uploads
+    # --------------------------------------------------------------------------
     app.include_router(uploads.router)
 
-    # Thread cleanup API is mounted at /api/threads/{thread_id}
+    # --------------------------------------------------------------------------
+    # Threads 路由 - 对话线程管理
+    # 类比：聊天记录的 CRUD，创建/删除/清理对话会话
+    # --------------------------------------------------------------------------
     app.include_router(threads.router)
 
-    # Agents API is mounted at /api/agents
+    # --------------------------------------------------------------------------
+    # Agents 路由 - 自定义 Agent 管理
+    # 类比：自定义组件配置，用户可以创建专属 AI 助手
+    # 每个 Agent 就像一个配置好的智能组件
+    # --------------------------------------------------------------------------
     app.include_router(agents.router)
 
-    # Suggestions API is mounted at /api/threads/{thread_id}/suggestions
+    # --------------------------------------------------------------------------
+    # Suggestions 路由 - 后续问题建议生成
+    # 类比：搜索框的自动补全或相关推荐
+    # 根据对话内容生成用户可能想问的问题
+    # --------------------------------------------------------------------------
     app.include_router(suggestions.router)
 
-    # Channels API is mounted at /api/channels
+    # --------------------------------------------------------------------------
+    # Channels 路由 - IM 渠道集成管理
+    # 类比：多平台登录集成（飞书、Slack、Telegram Bot）
+    # 让 AI 助手能在多个平台回复消息
+    # --------------------------------------------------------------------------
     app.include_router(channels.router)
 
-    # Assistants compatibility API (LangGraph Platform stub)
-    app.include_router(assistants_compat.router)
+    # --------------------------------------------------------------------------
+    # 以下是为了兼容 LangGraph Platform 的 API 设计
+    # 类比：为了保持向后兼容的 legacy API
+    # --------------------------------------------------------------------------
+    app.include_router(assistants_compat.router)  # LangGraph Platform 兼容层
+    app.include_router(thread_runs.router)        # 对话运行生命周期管理
+    app.include_router(runs.router)               # 无状态运行接口（流式响应）
 
-    # Thread Runs API (LangGraph Platform-compatible runs lifecycle)
-    app.include_router(thread_runs.router)
-
-    # Stateless Runs API (stream/wait without a pre-existing thread)
-    app.include_router(runs.router)
-
+    # ==========================================================================
+    # 健康检查端点 - 类似于前端的心beat 检测
+    # 用于负载均衡器判断服务是否可用
+    # 类比：React DevTools 的组件状态指示器
+    # ==========================================================================
     @app.get("/health", tags=["health"])
     async def health_check() -> dict:
-        """Health check endpoint.
+        """健康检查端点。
 
-        Returns:
-            Service health status information.
+        返回：
+            服务健康状态信息，类似于 { status: 'ok', uptime: 1234 }
+
+        使用场景：
+        - Docker/K8s 健康探针
+        - 负载均衡器健康检查
+        - 监控系统的存活检测
         """
         return {"status": "healthy", "service": "deer-flow-gateway"}
 
     return app
 
 
-# Create app instance for uvicorn
+# =============================================================================
+# 创建应用实例 - 供 uvicorn 服务器启动使用
+# 类似于：export const app = createApp();
+#
+# 启动命令：uvicorn app.gateway.app:app --reload
+# 这告诉 uvicorn：从 app.gateway.app 模块导入 app 变量
+# =============================================================================
 app = create_app()
